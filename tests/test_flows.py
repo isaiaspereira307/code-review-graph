@@ -226,6 +226,44 @@ class TestFlows:
         ep_files_all = {ep.file_path for ep in eps_all}
         assert "src/handler.spec.ts" in ep_files_all
 
+    def test_detect_entry_points_many_nodes_share_a_test_file(self):
+        """Per-file test detection stays correct when nodes share a path.
+
+        detect_entry_points memoises is_test_file per file_path, so a file
+        holding several nodes must still exclude all of them.
+        """
+        self._add_func("first_in_test_file", path="tests/helpers.py")
+        self._add_func("second_in_test_file", path="tests/helpers.py")
+        self._add_func("first_in_spec", path="src/handler.spec.ts", language="typescript")
+        self._add_func("second_in_spec", path="src/handler.spec.ts", language="typescript")
+        self._add_func("production", path="src/handler.ts", language="typescript")
+
+        names = {ep.name for ep in detect_entry_points(self.store)}
+        assert "production" in names
+        assert "first_in_test_file" not in names
+        assert "second_in_test_file" not in names
+        assert "first_in_spec" not in names
+        assert "second_in_spec" not in names
+
+        # The cache must not leak into the include_tests=True path.
+        names_all = {ep.name for ep in detect_entry_points(self.store, include_tests=True)}
+        assert {"first_in_test_file", "second_in_test_file", "first_in_spec"} <= names_all
+
+    def test_detect_entry_points_is_test_node_does_not_taint_its_file(self):
+        """A Test node must not mark its whole file as a test file.
+
+        The is_test flag belongs to the node while is_test_file belongs to the
+        path, so caching either one under the other's key drops or keeps real
+        production entry points. Names force the Test node to be scanned
+        first, since the store returns candidates ordered by name.
+        """
+        self._add_func("aaa_inline_test", path="src/app.py", is_test=True)
+        self._add_func("zzz_production_handler", path="src/app.py")
+
+        names = {ep.name for ep in detect_entry_points(self.store)}
+        assert "zzz_production_handler" in names
+        assert "aaa_inline_test" not in names
+
     def test_detect_entry_points_module_scope_caller_is_still_root(self):
         """A function called only from module scope (File-sourced CALLS) is a root.
 

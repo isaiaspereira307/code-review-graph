@@ -184,11 +184,20 @@ def detect_entry_points(
     # directory of the checkout. See :func:`code_review_graph.parser.is_test_file`.
     repo_root = store.get_repo_root()
 
+    # A graph has far more nodes than files, and is_test_file re-derives the
+    # same answer for every node sharing a path, so one dict lookup replaces
+    # its regex work for all but the first node of each file.
+    test_file_cache: dict[str, bool] = {}
+
     for node in candidate_nodes:
-        if not include_tests and (
-            node.is_test or _is_test_file(node.file_path, repo_root)
-        ):
-            continue
+        if not include_tests:
+            is_test = test_file_cache.get(node.file_path)
+            if is_test is None:
+                is_test = test_file_cache[node.file_path] = _is_test_file(
+                    node.file_path, repo_root,
+                )
+            if node.is_test or is_test:
+                continue
         if node.extra.get("verilog_kind"):
             continue
 

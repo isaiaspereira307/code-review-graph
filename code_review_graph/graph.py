@@ -359,6 +359,17 @@ class GraphStats:
 IMPORT_SCOPE_MAX_ANCESTORS = 12
 
 
+def _extra_payload(extra: Optional[str]) -> dict:
+    """The decoded ``extra`` value of one raw row.
+
+    Most rows carry the empty dict, so the common value skips the parser
+    entirely: on a large graph that saves a json.loads per row.
+    """
+    if not extra or extra == "{}":
+        return {}
+    return json.loads(extra)
+
+
 def _edge_import_scope(extra: Optional[str]) -> Optional[str]:
     """The ``import_scope`` recorded on one raw ``edges.extra`` value."""
     if not extra or IMPORT_SCOPE_KEY not in extra:
@@ -3734,11 +3745,11 @@ class GraphStore:
             return_type=row["return_type"],
             is_test=bool(row["is_test"]),
             file_hash=row["file_hash"],
-            extra=json.loads(row["extra"]) if row["extra"] else {},
+            extra=_extra_payload(row["extra"]),
         )
 
     def _row_to_edge(self, row: sqlite3.Row) -> GraphEdge:
-        extra = json.loads(row["extra"]) if row["extra"] else {}
+        extra = _extra_payload(row["extra"])
         confidence = row["confidence"] if "confidence" in row.keys() else 1.0
         confidence_tier = row["confidence_tier"] if "confidence_tier" in row.keys() else "EXTRACTED"
         keys = row.keys()
