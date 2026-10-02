@@ -36,6 +36,23 @@ from dataclasses import dataclass
 from typing import Iterable, Sequence
 
 
+def _algorithms():
+    """The implementation pair behind the traversal helpers.
+
+    ``CRG_BACKEND=c`` swaps in the C core. It is looked up per call rather than
+    at import so that :func:`code_review_graph.backend.set_backend` takes effect
+    without a reload. An unbuilt library falls back to Python, which is the
+    documented behaviour while the C core is being brought up.
+    """
+    from . import backend
+
+    if backend.is_c_backend() and backend.available():
+        from ._c_core import bindings_neighbourhood
+
+        return bindings_neighbourhood
+    return None
+
+
 def _sanitize_name(value: str) -> str:
     """Delegate to :func:`code_review_graph.graph._sanitize_name`.
 
@@ -473,6 +490,7 @@ def extract(data: dict, spec: NeighbourhoodSpec) -> dict:
     every node, the render depth and (for a path query) the highlighted path.
     Nodes outside the neighbourhood are absent, not dimmed.
     """
+    algorithms = _algorithms()
     spec.validate()
     nodes: list[dict] = data["nodes"]
     edges: list[dict] = data["edges"]
@@ -487,7 +505,12 @@ def extract(data: dict, spec: NeighbourhoodSpec) -> dict:
         seed_kind = "path"
         source = resolve_symbol(nodes, spec.path_from)[0]
         target = resolve_symbol(nodes, spec.path_to)[0]
-        path, path_directed = shortest_path(edges, source, target)
+        if algorithms is None:
+            path, path_directed = shortest_path(edges, source, target)
+        else:
+            path, path_directed = algorithms.shortest_path(
+                edges, source, target, PATH_EDGE_KINDS
+            )
         if path:
             seeds.extend(path)
         else:
@@ -522,8 +545,14 @@ def extract(data: dict, spec: NeighbourhoodSpec) -> dict:
             f"{_sanitize_name(path[-1])}; raise it to at least {len(path)}"
         )
 
-    adjacency = build_adjacency(edges, exclude=STRUCTURAL_EDGE_KINDS)
-    hops = hop_distances(adjacency, seeds, spec.depth)
+    if algorithms is None:
+        adjacency = build_adjacency(edges, exclude=STRUCTURAL_EDGE_KINDS)
+        hops = hop_distances(adjacency, seeds, spec.depth)
+    else:
+        adjacency = algorithms.build_adjacency(
+            edges, exclude=STRUCTURAL_EDGE_KINDS
+        )
+        hops = algorithms.hop_distances(adjacency, seeds, spec.depth)
 
     degrees: dict[str, int] = {}
     for edge in edges:
@@ -533,10 +562,16 @@ def extract(data: dict, spec: NeighbourhoodSpec) -> dict:
     # Containing files are attached so collapse/expand and clustering still
     # work.  They are rendered, not traversed, so they carry the hop of their
     # closest member.
-    parents = _parent_files(edges, set(hops))
-    hops, truncated = _select_within_budget(
-        hops, degrees, parents, spec.max_nodes, pinned=path
-    )
+    if algorithms is None:
+        parents = _parent_files(edges, set(hops))
+        hops, truncated = _select_within_budget(
+            hops, degrees, parents, spec.max_nodes, pinned=path
+        )
+    else:
+        parents = algorithms.parent_files(edges, set(hops))
+        hops, truncated = algorithms.select_within_budget(
+            hops, degrees, parents, spec.max_nodes, path
+        )
 
     selected = set(hops)
     # The cap can eat into the seed set itself. Report that rather than let a
